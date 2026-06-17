@@ -67,6 +67,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
   const [verificationRan, setVerificationRan] = useState(false);
+  const [verificationType, setVerificationType] = useState("");
   const [verificationNotes, setVerificationNotes] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -172,6 +173,7 @@ export default function App() {
       if (!json.text) { setError("Nothing returned. Please try again."); return; }
       setResult(json.text);
       setVerificationRan(json.verificationRan);
+      setVerificationType(json.verificationType || "");
       setVerificationNotes(json.verificationNotes || "");
     } catch (e) {
       setError("Request failed: " + e.message);
@@ -190,6 +192,7 @@ export default function App() {
     setResult("");
     setError("");
     setVerificationRan(false);
+    setVerificationType("");
     setVerificationNotes("");
   };
 
@@ -361,8 +364,8 @@ export default function App() {
 
             <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
               {verificationRan
-                ? <><strong style={{ color: GOLD }}>Fact-check pass run:</strong> {verificationNotes}</>
-                : <span>No fact-check needed — this activity was skills-based with no specific factual claims detected.</span>}
+                ? <><strong style={{ color: GOLD }}>{verificationType === "math" ? "Math check run:" : "Fact-check pass run:"}</strong> {verificationNotes}</>
+                : <span>No verification needed — this content had no specific factual claims or numeric problems detected.</span>}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
