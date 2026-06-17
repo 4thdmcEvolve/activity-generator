@@ -57,12 +57,15 @@ export default async function handler(req, res) {
 
   const safeMode = mode === "assignment" ? "assignment" : "activity";
   const contextBlob = `${lessonContent || ""} ${topic || ""} ${extra || ""}`;
-  const needsCheck = /\b(book|novel|play|author|wrote|historical|war|president|invented|discovered|scientist|year \d{4}|century)\b/i.test(contextBlob);
+  const needsFactCheck = /\b(book|novel|play|author|wrote|historical|war|president|invented|discovered|scientist|year \d{4}|century)\b/i.test(contextBlob);
+  const needsMathCheck = /\b(factor|equation|polynomial|solve for|algebra|trinomial|quadratic|fraction|decimal|percent|geometry|theorem|derivative|integral)\b/i.test(contextBlob)
+    || /\d+\s*[a-z]?\s*(\^|squared|cubed)/i.test(contextBlob);
+  const needsCheck = needsFactCheck || needsMathCheck;
 
   try {
     let verificationNotes = "No verification was run for this request.";
 
-    if (needsCheck) {
+    if (needsFactCheck) {
       const checkPrompt = `You are about to help build a classroom ${safeMode} based on this lesson context. Before generating anything, identify ONLY the specific factual claims worth double-checking (real book titles, real authors, real historical facts, real dates). List up to 4 claims as short bullet items. If there is nothing factual to verify (purely skills-based content like grammar or math procedures), say "No factual claims requiring verification."
 
 LESSON CONTEXT:
@@ -89,19 +92,66 @@ ${lessonContent || `${subject || ""} / ${grade || ""} / ${topic}`}`;
           .map((b) => b.text)
           .join("") || verificationNotes;
       }
+    } else if (needsMathCheck) {
+      // Math content cannot be verified by web search — it requires computation,
+      // not lookup. This pass asks the model to generate candidate numeric
+      // examples FIRST and show its work checking each one, before the main
+      // generation step is allowed to use them. This is a self-consistency
+      // check, not a guarantee of correctness, but it catches the most common
+      // failure mode (arithmetic slips) by forcing the work to be shown.
+      const mathCheckPrompt = `You are preparing numeric/algebraic examples for a classroom ${safeMode} on this topic. Before anything is built, generate 3-4 example problems appropriate to this lesson (matching its specific topic and difficulty level) and SHOW THE FULL WORKED SOLUTION for each one, step by step. Then verify each solution by checking it a second way (e.g., expanding a factored answer back out, or plugging a solved value back into the original equation). If any example fails its own check, discard it and replace it with a corrected one. Only output examples that have passed verification.
+
+LESSON CONTEXT:
+${lessonContent || `${subject || ""} / ${grade || ""} / ${topic}`}
+
+Output format: for each example, show "Problem:", "Worked solution:", and "Verification check:" on separate lines.`;
+
+      const checkResponse = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 700,
+          messages: [{ role: "user", content: mathCheckPrompt }],
+        }),
+      });
+      const checkData = await checkResponse.json();
+      if (!checkData.error) {
+        verificationNotes = (checkData.content || [])
+          .filter((b) => b.type === "text")
+          .map((b) => b.text)
+          .join("") || verificationNotes;
+      }
     }
 
     const modeInstructions = safeMode === "activity"
       ? `Build a CLASSROOM ACTIVITY students will DO during class. This means a structured task with clear steps, materials, timing, and student instructions. Not a worksheet of questions — an actual activity (game, station rotation, partner task, simulation, sorting exercise, etc.) that fits the lesson topic.`
       : `Build an ASSIGNMENT students will complete independently. This means specific tasks/questions/prompts with clear instructions.`;
 
-    const genPrompt = `You are an expert teacher creating classroom materials. ${modeInstructions}
-
-CRITICAL RULES:
+    const verificationInstruction = needsFactCheck
+      ? `CRITICAL RULES:
 - Use PLAIN TEXT only. No markdown, no asterisks, no hashtags.
 - Reference ONLY facts confirmed in the verification notes below. Do not state any specific factual claim (book plot details, historical facts, dates) that was not verified. If unsure, write generically rather than inventing specifics.
 - Ground this specifically in the lesson content provided — do not write a generic activity that could apply to any topic. Reference the actual objectives, skills, or content from the lesson.
-- Be concise but complete.
+- Be concise but complete.`
+      : needsMathCheck
+      ? `CRITICAL RULES:
+- Use PLAIN TEXT only. No markdown, no asterisks, no hashtags.
+- The verification notes below contain pre-checked, verified problems with worked solutions. USE THESE EXACT PROBLEMS AND NUMBERS rather than inventing new ones — they have already been computed and double-checked. Do not introduce any new numeric example that was not part of the verification pass.
+- Ground this specifically in the lesson content provided — do not write a generic activity that could apply to any topic. Reference the actual objectives, skills, or content from the lesson.
+- Be concise but complete.`
+      : `CRITICAL RULES:
+- Use PLAIN TEXT only. No markdown, no asterisks, no hashtags.
+- Ground this specifically in the lesson content provided — do not write a generic activity that could apply to any topic. Reference the actual objectives, skills, or content from the lesson.
+- Be concise but complete.`;
+
+    const genPrompt = `You are an expert teacher creating classroom materials. ${modeInstructions}
+
+${verificationInstruction}
 
 LESSON CONTEXT THE TEACHER PROVIDED:
 ${lessonContent || "None pasted — using manual fields below."}
@@ -112,7 +162,7 @@ Grade: ${grade || "Not specified"}
 Topic: ${topic}
 Extra direction from teacher: ${extra || "None"}
 
-VERIFICATION NOTES (facts confirmed or flagged — only use confirmed facts, avoid unconfirmed specifics):
+VERIFICATION NOTES (${needsMathCheck ? "pre-checked worked problems — use these exact numbers" : "facts confirmed or flagged — only use confirmed facts, avoid unconfirmed specifics"}):
 ${verificationNotes}
 
 OUTPUT FORMAT — exactly these sections:
@@ -159,6 +209,7 @@ HOW TO KNOW IT WORKED
     return res.status(200).json({
       text,
       verificationRan: needsCheck,
+      verificationType: needsFactCheck ? "facts" : needsMathCheck ? "math" : null,
       verificationNotes: needsCheck ? verificationNotes : null,
     });
   } catch (error) {
