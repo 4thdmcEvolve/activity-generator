@@ -68,6 +68,7 @@ export default function App() {
   const [result, setResult] = useState("");
   const [verificationRan, setVerificationRan] = useState(false);
   const [verificationType, setVerificationType] = useState("");
+  const [computationalPassed, setComputationalPassed] = useState(null);
   const [verificationNotes, setVerificationNotes] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -174,6 +175,7 @@ export default function App() {
       setResult(json.text);
       setVerificationRan(json.verificationRan);
       setVerificationType(json.verificationType || "");
+      setComputationalPassed(json.computationalPassed);
       setVerificationNotes(json.verificationNotes || "");
     } catch (e) {
       setError("Request failed: " + e.message);
@@ -193,6 +195,7 @@ export default function App() {
     setError("");
     setVerificationRan(false);
     setVerificationType("");
+    setComputationalPassed(null);
     setVerificationNotes("");
   };
 
@@ -362,10 +365,24 @@ export default function App() {
               <div>{renderResult(result)}</div>
             </div>
 
-            <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
-              {verificationRan
-                ? <><strong style={{ color: GOLD }}>{verificationType === "math" ? "Math check run:" : "Fact-check pass run:"}</strong> {verificationNotes}</>
-                : <span>No verification needed — this content had no specific factual claims or numeric problems detected.</span>}
+            <div style={{
+              background: computationalPassed === false ? "rgba(255,176,102,0.12)" : "rgba(255,255,255,0.04)",
+              border: computationalPassed === false ? "1px solid rgba(255,176,102,0.4)" : "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 12,
+              color: computationalPassed === false ? "#ffb066" : "rgba(255,255,255,0.5)", lineHeight: 1.6,
+            }}>
+              {!verificationRan && <span>No verification needed — this content had no specific factual or computational claims detected.</span>}
+              {verificationRan && computationalPassed === false && (
+                <><strong>⚠ Math could not be independently verified.</strong> The generated content uses simplified or generic examples instead of the original numbers. Review before using with students.</>
+              )}
+              {verificationRan && computationalPassed !== false && (
+                <>
+                  <strong style={{ color: GOLD }}>
+                    {verificationType === "both" ? "Facts and math both verified:" : verificationType === "math" ? "Math independently verified (two methods):" : "Fact-check pass run:"}
+                  </strong>{" "}
+                  {verificationType === "math" || verificationType === "both" ? "All numeric examples confirmed correct using two independent methods." : verificationNotes}
+                </>
+              )}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
