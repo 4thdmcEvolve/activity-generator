@@ -127,7 +127,7 @@ or just: NOTHING TO VERIFY`;
 
     const classifyResult = await callAnthropic({
       model: "claude-sonnet-4-6",
-      maxTokens: 400,
+      maxTokens: 600,
       prompt: classifyPrompt,
     });
 
@@ -141,17 +141,27 @@ or just: NOTHING TO VERIFY`;
 
     // ── STEP 2a: FACTUAL VERIFICATION (web search) ────────────────────────
     if (hasFactual) {
-      const factCheckPrompt = `The following claims were identified in a lesson and need verification via web search. For each one, confirm whether it is accurate, and note any correction needed. Be concise.
+      const factCheckPrompt = `The following claims were identified in a lesson and need verification via web search.
+
+Check EVERY claim, but report concisely: do NOT explain or describe claims that are simply confirmed accurate. Only give detail on claims that are INCORRECT or that need an important NUANCE a teacher should know before presenting it to students (e.g. "true for adults but not larvae", "true generally but this specific example is an exception").
 
 CLAIMS TO VERIFY:
 ${classification}
 
 LESSON CONTEXT (for reference):
-${lessonOrFields}`;
+${lessonOrFields}
+
+OUTPUT FORMAT — exactly this structure:
+SUMMARY: [X] of [Y] claims confirmed accurate with no issues.
+
+[Only include the section below if there is at least one flagged claim. If everything passed clean, end after the SUMMARY line and write nothing else.]
+
+FLAGGED CLAIMS:
+- [claim]: [INCORRECT or NUANCE] — [brief explanation and correction if needed]`;
 
       const factResult = await callAnthropic({
         model: "claude-sonnet-4-6",
-        maxTokens: 500,
+        maxTokens: 800,
         prompt: factCheckPrompt,
         useWebSearch: true,
       });
@@ -168,15 +178,17 @@ ${classification}
 LESSON CONTEXT:
 ${lessonOrFields}
 
-For each problem, output:
+For each problem, output EXACTLY these four lines, in this order, with no line ever left blank:
 Problem: [restate it]
 Method used: [name the method, e.g. "reverse FOIL" or "compound interest formula"]
 Worked solution: [full steps]
-Answer: [final answer]`;
+Answer: [the final numeric/algebraic answer — this line is REQUIRED and must always contain the actual answer value, never left blank or cut short]
+
+CRITICAL: Before moving to the next problem, confirm the Answer line for the current problem is complete and contains an actual value. Never end a problem's entry without a filled-in Answer line.`;
 
       const passA = await callAnthropic({
         model: "claude-sonnet-4-6",
-        maxTokens: 700,
+        maxTokens: 1000,
         prompt: solvePrompt,
       });
 
@@ -197,7 +209,7 @@ Result: CONFIRMED or INCORRECT (if incorrect, state the correct answer)`;
 
       const passB = await callAnthropic({
         model: "claude-sonnet-4-6",
-        maxTokens: 700,
+        maxTokens: 1000,
         prompt: verifyPrompt,
       });
 
