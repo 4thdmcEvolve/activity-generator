@@ -3,7 +3,10 @@
 //
 // SETUP IN VERCEL (Settings → Environment Variables):
 //   ANTHROPIC_API_KEY = your rotated Anthropic API key
-//   TOOLKIT_PASSWORD  = ActivityBeta26 (or this tool's assigned password)
+//   KV_REST_API_URL   = from Upstash dashboard
+//   KV_REST_API_TOKEN = from Upstash dashboard
+//
+// NOTE: TOOLKIT_PASSWORD env var is no longer used. Remove it from Vercel.
 //
 // ARCHITECTURE — replaces subject-keyword regex with a universal pre-pass:
 //
@@ -24,29 +27,13 @@
 // 3. GENERATE: builds the final activity/assignment, instructed to use only
 //    the pre-verified content and never introduce a new unverified claim.
 //
-// This makes 3 to 4 sequential Anthropic calls for content with computational
-// claims (classify, solve, re-derive, generate), vs. 2 for purely factual
-// content, vs. 1 for purely skills-based content with nothing to verify.
-// Frontend still makes ONE request and waits once — all of this happens
-// inside this single endpoint.
+// 4. CROSS-CHECK: mechanical numeric comparison between verified answers
+//    and generated content — catches number/scenario mismatches.
+//
+// This makes 3 to 5 sequential Anthropic calls depending on content type.
+// Frontend still makes ONE request and waits once.
 
-const rateLimitStore = new Map();
-const MAX_REQUESTS_PER_WINDOW = 40;
-const WINDOW_MS = 60 * 60 * 1000;
-
-function checkRateLimit(key) {
-  const now = Date.now();
-  const record = rateLimitStore.get(key);
-  if (!record || now > record.resetAt) {
-    rateLimitStore.set(key, { count: 1, resetAt: now + WINDOW_MS });
-    return { allowed: true };
-  }
-  if (record.count >= MAX_REQUESTS_PER_WINDOW) {
-    return { allowed: false, resetAt: record.resetAt };
-  }
-  record.count += 1;
-  return { allowed: true };
-}
+import { Redis } from '@upstash/redis';
 
 async function callAnthropic({ model, maxTokens, prompt, useWebSearch }) {
   const body = {
@@ -82,23 +69,66 @@ export default async function handler(req, res) {
 
   const { toolkitPassword, mode, lessonContent, subject, grade, topic, extra } = req.body || {};
 
-  const expected = process.env.TOOLKIT_PASSWORD;
-  if (!expected) {
-    return res.status(500).json({ error: { message: "Server configuration error: TOOLKIT_PASSWORD not set" } });
+  // ── SUBSCRIBER VALIDATION VIA REDIS ───────────────────────────────────
+  if (!toolkitPassword) {
+    return res.status(401).json({ error: { message: "Access code required.", code: "AUTH_REQUIRED" } });
   }
-  if (!toolkitPassword || toolkitPassword !== expected) {
-    return res.status(401).json({ error: { message: "Invalid or missing access password.", code: "AUTH_REQUIRED" } });
+
+  const redisUrl = process.env.KV_REST_API_URL;
+  const redisToken = process.env.KV_REST_API_TOKEN;
+
+  if (!redisUrl || !redisToken) {
+    return res.status(500).json({ error: { message: "Server configuration error." } });
   }
+
   if (!process.env.ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: { message: "Server configuration error: ANTHROPIC_API_KEY not set" } });
+    return res.status(500).json({ error: { message: "Server configuration error: ANTHROPIC_API_KEY not set." } });
   }
 
-  const limit = checkRateLimit(toolkitPassword);
-  if (!limit.allowed) {
-    const minutes = Math.ceil((limit.resetAt - Date.now()) / 60000);
-    return res.status(429).json({ error: { message: `Rate limit reached. Try again in about ${minutes} minute(s).` } });
+  const redis = new Redis({ url: redisUrl, token: redisToken });
+  const key = 'subscriber:' + toolkitPassword.trim().toLowerCase();
+
+  let record;
+  try {
+    const raw = await redis.get(key);
+
+    if (raw === null || raw === undefined) {
+      return res.status(401).json({ error: { message: "Invalid or expired access code.", code: "AUTH_REQUIRED" } });
+    }
+
+    if (typeof raw === 'string') {
+      try { record = JSON.parse(raw); } catch (e) { record = null; }
+    } else {
+      record = raw;
+    }
+
+    if (!record || typeof record.limit === 'undefined') {
+      return res.status(500).json({ error: { message: "Account data error. Contact brandon@4thdmc.com." } });
+    }
+
+    // Reset usage if the monthly window has passed
+    const now = Date.now();
+    if (now > record.resetAt) {
+      record.used = 0;
+      record.resetAt = now + 30 * 24 * 60 * 60 * 1000;
+      await redis.set(key, JSON.stringify(record));
+    }
+
+    // Check limit
+    if (record.used >= record.limit) {
+      return res.status(429).json({
+        error: {
+          message: `You've used all ${record.limit} generations for this month. Your limit resets on ${new Date(record.resetAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}.`,
+          code: "LIMIT_REACHED",
+        }
+      });
+    }
+
+  } catch (err) {
+    return res.status(500).json({ error: { message: "Server error during validation. Please try again." } });
   }
 
+  // ── INPUT VALIDATION ──────────────────────────────────────────────────
   if (!topic || !topic.trim()) {
     return res.status(400).json({ error: { message: "Topic is required." } });
   }
@@ -217,9 +247,6 @@ Result: CONFIRMED or INCORRECT (if incorrect, state the correct answer)`;
 
       const passBText = passB.ok ? passB.text : "";
 
-      // If the independent verification pass found anything INCORRECT,
-      // do not pass the unverified content forward. Flag it instead of
-      // silently using potentially wrong numbers.
       computationalPassed = !/INCORRECT/i.test(passBText) && passA.ok && passB.ok;
 
       computationalNotes = computationalPassed
@@ -227,7 +254,7 @@ Result: CONFIRMED or INCORRECT (if incorrect, state the correct answer)`;
         : `Verification found a discrepancy and could not confirm all problems independently. Original work:\n${passAText}\n\nVerification attempt:\n${passBText}`;
     }
 
-    // ── STEP 3: GENERATE ───────────────────────────────────────────────
+    // ── STEP 3: GENERATE ───────────────────────────────────────────────────
     const modeInstructions = safeMode === "activity"
       ? `Build a CLASSROOM ACTIVITY students will DO during class. This means a structured task with clear steps, materials, timing, and student instructions. Not a worksheet of questions — an actual activity (game, station rotation, partner task, simulation, sorting exercise, etc.) that fits the lesson topic.`
       : `Build an ASSIGNMENT students will complete independently. This means specific tasks/questions/prompts with clear instructions.`;
@@ -301,13 +328,7 @@ HOW TO KNOW IT WORKED
       return res.status(500).json({ error: { message: "Nothing was generated. Please try again." } });
     }
 
-    // ── STEP 4: CROSS-CHECK ─────────────────────────────────────────────
-    // Mechanical safeguard against the generation step ignoring its own
-    // verified numbers, or misattributing a verified figure to the wrong
-    // scenario (the exact failure found in testing: a correct answer to a
-    // 30-year problem got reused as the answer to a 43-year problem). This
-    // is a real check against the verification notes, not a repeat of the
-    // "use only verified numbers" instruction already given during generation.
+    // ── STEP 4: CROSS-CHECK ────────────────────────────────────────────────
     let crossCheckFlag = null;
     if (hasComputational && computationalPassed) {
       const crossCheckPrompt = `Below is a VERIFIED set of correct numeric answers, and a GENERATED activity that was supposed to use only those exact verified numbers.
@@ -335,6 +356,18 @@ If there is a mismatch: write "MISMATCH FOUND:" followed by exactly what doesn't
       }
     }
 
+    // ── DECREMENT USAGE IN REDIS ───────────────────────────────────────────
+    // Only decrement after a successful generation
+    try {
+      record.used += 1;
+      await redis.set(key, JSON.stringify(record));
+    } catch (err) {
+      // Don't fail the response if the decrement fails — generation succeeded
+      console.error("Failed to decrement usage:", err);
+    }
+
+    const remaining = record.limit - record.used;
+
     const verificationType = hasFactual && hasComputational
       ? "both"
       : hasFactual
@@ -350,7 +383,10 @@ If there is a mismatch: write "MISMATCH FOUND:" followed by exactly what doesn't
       computationalPassed: hasComputational ? computationalPassed : null,
       crossCheckFlag,
       verificationNotes: verificationBlock,
+      remaining,
+      limit: record.limit,
     });
+
   } catch (error) {
     return res.status(500).json({ error: { message: "Proxy error: " + error.message } });
   }
