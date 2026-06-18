@@ -170,25 +170,27 @@ FLAGGED CLAIMS:
 
     // ── STEP 2b: COMPUTATIONAL VERIFICATION (two method-diverse passes) ───
     if (hasComputational) {
-      const solvePrompt = `Solve the following computational claims/problems from this lesson context, showing full step-by-step work for each. Use the most direct method appropriate to each problem.
+      const solvePrompt = `Solve the computational content in this lesson, showing full step-by-step work for each.
 
-COMPUTATIONAL CLAIMS:
+CRITICAL: Do not work from a vague restatement of the topic. Go back to the LESSON CONTEXT below and find every SPECIFIC numeric scenario actually written in it (every dollar amount, rate, time period, and any derived/follow-on scenario like "what if it stops at year X and continues to year Y"). Solve each one using its EXACT original numbers. If the lesson contains multiple related scenarios (e.g. a comparison between two paths, or a multi-step scenario), solve every step of every scenario individually — do not skip or summarize any of them.
+
+COMPUTATIONAL CLAIMS IDENTIFIED:
 ${classification}
 
-LESSON CONTEXT:
+LESSON CONTEXT (the authoritative source for exact numbers — re-read it for every scenario, do not rely only on the claims list above):
 ${lessonOrFields}
 
-For each problem, output EXACTLY these four lines, in this order, with no line ever left blank:
-Problem: [restate it]
-Method used: [name the method, e.g. "reverse FOIL" or "compound interest formula"]
+For each individual numeric scenario, output EXACTLY these four lines, in this order, with no line ever left blank:
+Problem: [restate it with its EXACT original numbers from the lesson]
+Method used: [name the method]
 Worked solution: [full steps]
 Answer: [the final numeric/algebraic answer — this line is REQUIRED and must always contain the actual answer value, never left blank or cut short]
 
-CRITICAL: Before moving to the next problem, confirm the Answer line for the current problem is complete and contains an actual value. Never end a problem's entry without a filled-in Answer line.`;
+CRITICAL: Before moving to the next problem, confirm the Answer line for the current problem is complete and contains an actual value. If the lesson has 5 distinct numeric scenarios, you must output 5 separate Problem/Answer entries, not a condensed summary of fewer.`;
 
       const passA = await callAnthropic({
         model: "claude-sonnet-4-6",
-        maxTokens: 1000,
+        maxTokens: 1600,
         prompt: solvePrompt,
       });
 
@@ -209,7 +211,7 @@ Result: CONFIRMED or INCORRECT (if incorrect, state the correct answer)`;
 
       const passB = await callAnthropic({
         model: "claude-sonnet-4-6",
-        maxTokens: 1000,
+        maxTokens: 1600,
         prompt: verifyPrompt,
       });
 
@@ -287,7 +289,7 @@ HOW TO KNOW IT WORKED
 
     const genResult = await callAnthropic({
       model: "claude-haiku-4-5-20251001",
-      maxTokens: 1200,
+      maxTokens: 1800,
       prompt: genPrompt,
     });
 
@@ -297,6 +299,40 @@ HOW TO KNOW IT WORKED
 
     if (!genResult.text) {
       return res.status(500).json({ error: { message: "Nothing was generated. Please try again." } });
+    }
+
+    // ── STEP 4: CROSS-CHECK ─────────────────────────────────────────────
+    // Mechanical safeguard against the generation step ignoring its own
+    // verified numbers, or misattributing a verified figure to the wrong
+    // scenario (the exact failure found in testing: a correct answer to a
+    // 30-year problem got reused as the answer to a 43-year problem). This
+    // is a real check against the verification notes, not a repeat of the
+    // "use only verified numbers" instruction already given during generation.
+    let crossCheckFlag = null;
+    if (hasComputational && computationalPassed) {
+      const crossCheckPrompt = `Below is a VERIFIED set of correct numeric answers, and a GENERATED activity that was supposed to use only those exact verified numbers.
+
+Compare every dollar amount, percentage, and numeric result in the GENERATED ACTIVITY against the VERIFIED ANSWERS. Check specifically for: (1) a verified number being attached to the wrong scenario or wrong time period than it was verified for, (2) any number appearing in the generated activity that does not match any verified answer, (3) any internal inconsistency between two numbers in the generated activity that are supposed to relate to each other (e.g. a starting amount, a final amount, and a stated growth rate should all be mutually consistent).
+
+VERIFIED ANSWERS:
+${computationalNotes}
+
+GENERATED ACTIVITY:
+${genResult.text}
+
+Output format:
+If everything matches correctly: just write "ALL NUMBERS MATCH VERIFIED ANSWERS."
+If there is a mismatch: write "MISMATCH FOUND:" followed by exactly what doesn't match and what the correct verified number should be.`;
+
+      const crossCheck = await callAnthropic({
+        model: "claude-sonnet-4-6",
+        maxTokens: 500,
+        prompt: crossCheckPrompt,
+      });
+
+      if (crossCheck.ok && /MISMATCH FOUND/i.test(crossCheck.text)) {
+        crossCheckFlag = crossCheck.text;
+      }
     }
 
     const verificationType = hasFactual && hasComputational
@@ -312,6 +348,7 @@ HOW TO KNOW IT WORKED
       verificationRan: hasFactual || hasComputational,
       verificationType,
       computationalPassed: hasComputational ? computationalPassed : null,
+      crossCheckFlag,
       verificationNotes: verificationBlock,
     });
   } catch (error) {
