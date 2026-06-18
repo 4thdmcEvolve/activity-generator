@@ -69,6 +69,7 @@ export default function App() {
   const [verificationRan, setVerificationRan] = useState(false);
   const [verificationType, setVerificationType] = useState("");
   const [computationalPassed, setComputationalPassed] = useState(null);
+  const [crossCheckFlag, setCrossCheckFlag] = useState(null);
   const [verificationNotes, setVerificationNotes] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -176,6 +177,7 @@ export default function App() {
       setVerificationRan(json.verificationRan);
       setVerificationType(json.verificationType || "");
       setComputationalPassed(json.computationalPassed);
+      setCrossCheckFlag(json.crossCheckFlag || null);
       setVerificationNotes(json.verificationNotes || "");
     } catch (e) {
       setError("Request failed: " + e.message);
@@ -196,6 +198,7 @@ export default function App() {
     setVerificationRan(false);
     setVerificationType("");
     setComputationalPassed(null);
+    setCrossCheckFlag(null);
     setVerificationNotes("");
   };
 
@@ -352,6 +355,11 @@ export default function App() {
             }}>
               {loading ? "⏳  Building Your Activity..." : "GENERATE ACTIVITY"}
             </button>
+            <div style={{ textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
+              {loading
+                ? "This can take up to two minutes for content-heavy lessons — it's running multiple accuracy checks behind the scenes. No need to refresh or click again."
+                : "Generation includes built-in fact and math verification, so it may take 60-120 seconds depending on lesson complexity."}
+            </div>
           </>
         )}
 
@@ -366,16 +374,19 @@ export default function App() {
             </div>
 
             <div style={{
-              background: computationalPassed === false ? "rgba(255,176,102,0.12)" : "rgba(255,255,255,0.04)",
-              border: computationalPassed === false ? "1px solid rgba(255,176,102,0.4)" : "1px solid rgba(255,255,255,0.1)",
+              background: (computationalPassed === false || crossCheckFlag) ? "rgba(255,176,102,0.12)" : "rgba(255,255,255,0.04)",
+              border: (computationalPassed === false || crossCheckFlag) ? "1px solid rgba(255,176,102,0.4)" : "1px solid rgba(255,255,255,0.1)",
               borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 12,
-              color: computationalPassed === false ? "#ffb066" : "rgba(255,255,255,0.5)", lineHeight: 1.6,
+              color: (computationalPassed === false || crossCheckFlag) ? "#ffb066" : "rgba(255,255,255,0.5)", lineHeight: 1.6,
             }}>
               {!verificationRan && <span>No verification needed — this content had no specific factual or computational claims detected.</span>}
               {verificationRan && computationalPassed === false && (
                 <><strong>⚠ Math could not be independently verified.</strong> The generated content uses simplified or generic examples instead of the original numbers. Review before using with students.</>
               )}
-              {verificationRan && computationalPassed !== false && (
+              {verificationRan && computationalPassed !== false && crossCheckFlag && (
+                <><strong>⚠ A number in this activity may not match its verified answer.</strong> {crossCheckFlag} Please double-check the figures above before using with students.</>
+              )}
+              {verificationRan && computationalPassed !== false && !crossCheckFlag && (
                 <>
                   <strong style={{ color: GOLD }}>
                     {verificationType === "both" ? "Facts and math both verified:" : verificationType === "math" ? "Math independently verified (two methods):" : "Fact-check pass run:"}
