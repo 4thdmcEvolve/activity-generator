@@ -64,6 +64,7 @@ export default function App() {
   const [extra, setExtra] = useState("");
   const [lessonContent, setLessonContent] = useState("");
   const [parsedNote, setParsedNote] = useState("");
+  const [isFromLPG, setIsFromLPG] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
   const [verificationRan, setVerificationRan] = useState(false);
@@ -101,7 +102,7 @@ export default function App() {
         setLimit(data.limit);
         setUnlocked(true);
       } else {
-        setAuthError("Incorrect password. Try again.");
+        setAuthError("Incorrect access code. Try again.");
       }
     } catch (err) {
       setAuthError("Connection error. Try again.");
@@ -112,6 +113,7 @@ export default function App() {
 
   const tryParse = (text) => {
     setLessonContent(text);
+    setIsFromLPG(false);
     if (!text.trim()) { setParsedNote(""); return; }
 
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -162,6 +164,7 @@ export default function App() {
           grade,
           topic,
           extra,
+          isFromLPG,
           toolkitPassword: localStorage.getItem("toolkit_password") || "",
         }),
       });
@@ -171,7 +174,7 @@ export default function App() {
           localStorage.removeItem("toolkit_unlocked");
           localStorage.removeItem("toolkit_password");
           setUnlocked(false);
-          setError("That password is no longer valid. Please re-enter.");
+          setError("That access code is no longer valid. Please re-enter.");
           return;
         }
         if (json.error.code === "LIMIT_REACHED") {
@@ -212,7 +215,16 @@ export default function App() {
     setComputationalPassed(null);
     setCrossCheckFlag(null);
     setVerificationNotes("");
+    setIsFromLPG(false);
   };
+
+  const timingNote = loading
+    ? isFromLPG
+      ? "Building your activity from your verified lesson — this should be quick."
+      : "This can take up to two minutes for content-heavy lessons — it's running multiple accuracy checks behind the scenes. No need to refresh or click again."
+    : isFromLPG
+    ? "Verification skipped — this content is already confirmed from the Lesson Plan Generator. Generation will be faster."
+    : "Generation includes built-in fact and math verification, so it may take 60-120 seconds depending on lesson complexity.";
 
   if (!unlocked) {
     return (
@@ -230,8 +242,7 @@ export default function App() {
           <div style={{
             display: "inline-block", border: `1px solid ${GOLD}`, color: GOLD,
             fontSize: 10, letterSpacing: 4, padding: "4px 14px", marginBottom: 20,
-            fontWeight: 700, borderRadius: 2, textTransform: "uppercase",
-            fontFamily: "monospace",
+            fontWeight: 700, borderRadius: 2, textTransform: "uppercase", fontFamily: "monospace",
           }}>4THDMC | EVOLVE LLC</div>
           <div style={{ fontFamily: "Georgia, serif", fontSize: 26, fontWeight: 900, color: "#fff", marginBottom: 10 }}>
             Activity Generator
@@ -266,8 +277,7 @@ export default function App() {
               width: "100%", padding: 14,
               background: authChecking ? "rgba(201,168,76,0.5)" : GOLD,
               color: DARK, border: "none", borderRadius: 8, fontWeight: 900,
-              fontSize: 14, letterSpacing: 2,
-              cursor: authChecking ? "wait" : "pointer", textTransform: "uppercase",
+              fontSize: 14, letterSpacing: 2, cursor: authChecking ? "wait" : "pointer", textTransform: "uppercase",
             }}
           >{authChecking ? "Checking..." : "Unlock Tool"}</button>
           <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, marginTop: 20, lineHeight: 1.5 }}>
@@ -329,6 +339,36 @@ export default function App() {
                   {parsedNote}
                 </div>
               )}
+
+              {/* ── LPG SOURCE CHECKBOX ── */}
+              {lessonContent.trim() && (
+                <div style={{
+                  marginTop: 14,
+                  borderLeft: `4px solid ${GOLD}`,
+                  background: isFromLPG ? "rgba(201,168,76,0.1)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${isFromLPG ? GOLD : "rgba(201,168,76,0.35)"}`,
+                  borderRadius: 10,
+                  padding: "14px 16px",
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#fff", marginBottom: 6 }}>
+                    Did this lesson come from the Lesson Plan Generator?
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12, lineHeight: 1.6 }}>
+                    If yes, check this box. Verification has already been completed on this content and will be skipped, saving time. If this lesson came from anywhere else, leave it unchecked and the full verification pipeline will run as normal.
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={isFromLPG}
+                      onChange={(e) => setIsFromLPG(e.target.checked)}
+                      style={{ width: 18, height: 18, accentColor: GOLD, cursor: "pointer", flexShrink: 0 }}
+                    />
+                    <span style={{ fontSize: 13, color: isFromLPG ? GOLD : "rgba(255,255,255,0.7)", fontWeight: isFromLPG ? 700 : 400 }}>
+                      Yes, this is from the Lesson Plan Generator
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "22px 18px", marginBottom: 16 }}>
@@ -374,10 +414,8 @@ export default function App() {
             }}>
               {loading ? "Building Your Activity..." : remaining === 0 ? "Monthly Limit Reached" : "GENERATE ACTIVITY"}
             </button>
-            <div style={{ textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
-              {loading
-                ? "This can take up to two minutes for content-heavy lessons — it's running multiple accuracy checks behind the scenes. No need to refresh or click again."
-                : "Generation includes built-in fact and math verification, so it may take 60-120 seconds depending on lesson complexity."}
+            <div style={{ textAlign: "center", color: isFromLPG ? "rgba(201,168,76,0.6)" : "rgba(255,255,255,0.35)", fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
+              {timingNote}
             </div>
           </>
         )}
@@ -393,19 +431,37 @@ export default function App() {
             </div>
 
             <div style={{
-              background: (computationalPassed === false || crossCheckFlag) ? "rgba(255,176,102,0.12)" : "rgba(255,255,255,0.04)",
-              border: (computationalPassed === false || crossCheckFlag) ? "1px solid rgba(255,176,102,0.4)" : "1px solid rgba(255,255,255,0.1)",
+              background: verificationType === "trusted-source"
+                ? "rgba(27,58,107,0.3)"
+                : (computationalPassed === false || crossCheckFlag)
+                ? "rgba(255,176,102,0.12)"
+                : "rgba(255,255,255,0.04)",
+              border: verificationType === "trusted-source"
+                ? "1px solid rgba(201,168,76,0.2)"
+                : (computationalPassed === false || crossCheckFlag)
+                ? "1px solid rgba(255,176,102,0.4)"
+                : "1px solid rgba(255,255,255,0.1)",
               borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 12,
-              color: (computationalPassed === false || crossCheckFlag) ? "#ffb066" : "rgba(255,255,255,0.5)", lineHeight: 1.6,
+              color: verificationType === "trusted-source"
+                ? "rgba(255,255,255,0.6)"
+                : (computationalPassed === false || crossCheckFlag)
+                ? "#ffb066"
+                : "rgba(255,255,255,0.5)",
+              lineHeight: 1.6,
             }}>
-              {!verificationRan && <span>No verification needed — this content had no specific factual or computational claims detected.</span>}
-              {verificationRan && computationalPassed === false && (
+              {verificationType === "trusted-source" && (
+                <span>This content was already verified when it was generated by the Lesson Plan Generator. No additional verification was needed.</span>
+              )}
+              {verificationType !== "trusted-source" && !verificationRan && (
+                <span>No verification needed — this content had no specific factual or computational claims detected.</span>
+              )}
+              {verificationType !== "trusted-source" && verificationRan && computationalPassed === false && (
                 <><strong>Math could not be independently verified.</strong> The generated content uses simplified or generic examples instead of the original numbers. Review before using with students.</>
               )}
-              {verificationRan && computationalPassed !== false && crossCheckFlag && (
+              {verificationType !== "trusted-source" && verificationRan && computationalPassed !== false && crossCheckFlag && (
                 <><strong>A number in this activity may not match its verified answer.</strong> {crossCheckFlag} Please double-check the figures above before using with students.</>
               )}
-              {verificationRan && computationalPassed !== false && !crossCheckFlag && (
+              {verificationType !== "trusted-source" && verificationRan && computationalPassed !== false && !crossCheckFlag && (
                 <>
                   <strong style={{ color: GOLD }}>
                     {verificationType === "both" ? "Facts and math both verified:" : verificationType === "math" ? "Math independently verified (two methods):" : "Fact-check pass run:"}
